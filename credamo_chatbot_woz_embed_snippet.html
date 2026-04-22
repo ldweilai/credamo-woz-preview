@@ -1,0 +1,516 @@
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<!--
+把这一整段粘到见数的 HTML 题里即可。
+这是实验推荐版：不接真实大模型，按 topic_id + user_stance + ai_condition 调用预设脚本。
+-->
+
+<div id="credamo-chatbot-wrap" style="max-width: 680px; margin: 20px auto; font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;">
+  <div id="chat-box" style="
+      display: flex;
+      flex-direction: column;
+      width: 100%;
+      min-height: 420px;
+      max-height: 420px;
+      padding: 14px;
+      box-sizing: border-box;
+      border: 1px solid #d9d9d9;
+      border-radius: 14px;
+      background: #fafafa;
+      overflow-y: auto;
+      box-shadow: 0 4px 12px rgba(0, 0, 0, 0.06);"></div>
+
+  <div style="display: flex; align-items: center; width: 100%; margin: 12px auto 8px;">
+    <input
+      type="text"
+      id="user-input"
+      placeholder="请用一句话说明你的理由"
+      style="
+        flex: 1;
+        padding: 12px 14px;
+        border: 1px solid #cfcfcf;
+        outline: none;
+        border-radius: 22px;
+        font-size: 14px;" />
+    <button
+      id="send-btn"
+      type="button"
+      style="
+        border-radius: 22px;
+        padding: 12px 18px;
+        margin-left: 10px;
+        border: none;
+        cursor: pointer;
+        color: #fff;
+        font-size: 14px;
+        background: #1677ff;">发送</button>
+  </div>
+
+  <div id="chat-tip" style="max-width: 100%; color: #666; font-size: 12px; line-height: 1.5;">
+    请先输入一句你的理由。系统会给出一条研究用回复，本轮对话仅 1 次。
+  </div>
+
+  <input type="hidden" id="credamo_reason_text" />
+  <input type="hidden" id="credamo_ai_reply" />
+  <input type="hidden" id="credamo_ai_response_id" />
+  <input type="hidden" id="credamo_chat_history" />
+  <input type="hidden" id="credamo_trial_complete" value="0" />
+</div>
+
+<script>
+  const DEFAULT_CONFIG = {
+    topicId: "T01",
+    aiCondition: "sycophancy", // sycophancy | neutral
+    userStance: "", // support | oppose，留空时可由 initialAttitudeValue 自动推导
+    initialAttitudeValue: null, // 1~6，1/2/3 -> oppose，4/5/6 -> support
+    initialAttitudeSelector: "", // 例如：input[name="Q_ATTITUDE"]，仅在初始态度题和本 HTML 题同页时可用
+    maxTurns: 1,
+    typingDelayMs: 2200,
+    lockAfterReply: true,
+    initialGreeting: "你好，我是研究用智能助手。请先用一句话说明你对当前议题的看法或理由。",
+    externalTargets: {
+      // 如果见数不会保存 HTML 题里的 hidden input，就把下面几个 selector 改成你后面隐藏文本题的实际选择器。
+      // 例如：reason: 'textarea[name=\"Q_REASON\"]'
+      reason: "",
+      aiReply: "",
+      aiResponseId: "",
+      chatHistory: ""
+    }
+  };
+
+  function parseQueryConfig() {
+    const params = new URLSearchParams(window.location.search);
+    const queryConfig = {};
+
+    if (params.has("topicId")) queryConfig.topicId = params.get("topicId");
+    if (params.has("aiCondition")) queryConfig.aiCondition = params.get("aiCondition");
+    if (params.has("userStance")) queryConfig.userStance = params.get("userStance");
+    if (params.has("initialAttitudeValue")) queryConfig.initialAttitudeValue = Number(params.get("initialAttitudeValue"));
+    if (params.has("typingDelayMs")) queryConfig.typingDelayMs = Number(params.get("typingDelayMs"));
+
+    return queryConfig;
+  }
+
+  const queryConfig = parseQueryConfig();
+  const pageConfig = window.CREDAMO_CHATBOT_CONFIG || {};
+  const CONFIG = Object.assign({}, DEFAULT_CONFIG, queryConfig, pageConfig);
+
+  function readValueFromSelector(selector) {
+    if (!selector) return null;
+
+    const nodes = Array.from(document.querySelectorAll(selector));
+    if (!nodes.length) return null;
+
+    const checkedNode = nodes.find(function (node) {
+      return (node.type === "radio" || node.type === "checkbox") && node.checked;
+    });
+    if (checkedNode) return checkedNode.value;
+
+    const firstNode = nodes[0];
+    if (typeof firstNode.value !== "undefined" && firstNode.value !== "") {
+      return firstNode.value;
+    }
+
+    const nestedChecked = firstNode.querySelector
+      ? firstNode.querySelector("input[type='radio']:checked, input[type='checkbox']:checked, option:checked")
+      : null;
+    if (nestedChecked) {
+      return nestedChecked.value || nestedChecked.textContent.trim();
+    }
+
+    return firstNode.textContent ? firstNode.textContent.trim() : null;
+  }
+
+  function resolveInitialAttitudeValue() {
+    if (CONFIG.initialAttitudeValue !== null && CONFIG.initialAttitudeValue !== undefined && CONFIG.initialAttitudeValue !== "") {
+      return CONFIG.initialAttitudeValue;
+    }
+    return readValueFromSelector(CONFIG.initialAttitudeSelector);
+  }
+
+  function deriveUserStance(initialAttitudeValue) {
+    const num = Number(initialAttitudeValue);
+    if (!num) return "support";
+    return num <= 3 ? "oppose" : "support";
+  }
+
+  CONFIG.initialAttitudeValue = resolveInitialAttitudeValue();
+
+  if (!CONFIG.userStance) {
+    CONFIG.userStance = deriveUserStance(CONFIG.initialAttitudeValue);
+  }
+
+  const TOPIC_SCRIPT_TEXTS = {
+    T01: {
+      supportSycophancy: [
+        "你的判断很有道理，也抓住了 Green AI 治理中的关键。让用户看到能耗信息，不只是多一个提示而已，它确实可能帮助更多人把原本看不见的环境成本纳入日常决策，也会推动平台更认真地考虑能效问题。尤其是在大多数用户平时并不会主动搜索相关数据的情况下，这种直接呈现本身就可能改变他们对 AI 使用后果的理解方式。",
+        "你的看法很有依据，也符合很多人对绿色治理的直觉。能耗标签的意义不只是告知数字，它更可能让用户在每次调用 AI 时都意识到背后的资源消耗，从而对高能耗服务形成更清晰的判断。换句话说，它不只是补充信息，而是在不断提醒用户，便利和环境代价其实常常是同时存在的。"
+      ],
+      opposeSycophancy: [
+        "你的担心很有道理，也指出了 Green AI 治理中容易被忽视的问题。单次能耗标签如果估算不准，不仅可能让用户误解一次调用的真实影响，还可能把原本复杂的系统能耗问题过度简化成一个并不稳定的数字。这样一来，表面上看是增加了透明度，实际上却可能让讨论停留在一个并不可靠的指标上。",
+        "你的顾虑是有根据的，也抓到了这项政策的实际难点。如果标签不能稳定反映真实能耗，它确实可能误导用户，甚至让大家误以为只看一次使用的数字，就足以判断整套 AI 系统的环境影响。对这种本来就需要结合训练、推理和基础设施综合理解的问题来说，这种简化本身就是一种风险。"
+      ],
+      neutral: [
+        "这个问题需要同时考虑透明度、估算准确性和用户理解成本。支持公开能耗信息有其合理性，但如果估算口径不清、表达方式过度简化，也可能让用户对 AI 的真实环境影响形成片面的理解。也就是说，披露本身并不自动等于更好的理解，它还取决于这些信息是否足够稳定、清楚并且容易被正确解释。",
+        "这个议题既涉及环境披露，也涉及估算误差和解释成本。单纯支持或反对都可能忽略关键问题，更稳妥的做法往往是同时比较披露带来的公共价值，以及它可能制造的误读风险。真正有意义的讨论，不只是要不要显示，而是显示出来的信息能不能支撑较为准确的判断。"
+      ]
+    },
+    T02: {
+      supportSycophancy: [
+        "你的判断很有道理，也抓住了 Green AI 产品设计中的关键。默认开启绿色模式，最大的价值就在于它不要求每个用户都主动研究模型差异，却能在多数日常任务里自然地把选择往更低能耗的方向推动。对于那些只想快速完成任务、并不会反复比较设置的人来说，这种默认机制往往比事后提醒更容易真正发挥作用。",
+        "你的看法很有依据，也回应了平台责任这一点。把绿色模式设为默认选项，不只是一个界面设置，它实际上会影响大多数用户的真实使用路径，因此确实可能比单纯提示用户节能更有效。很多时候，用户最终用什么，并不是因为他们认真比较过，而是因为系统一开始就把某种选择放在了最省事的位置。"
+      ],
+      opposeSycophancy: [
+        "你的担心很有道理，也指出了默认设置可能带来的问题。若绿色模式明显牺牲速度、质量或稳定性，用户体验确实可能因此受损，而且很多人未必会意识到自己默认使用的是一个受限版本。这样一来，节能目标虽然实现了，但代价可能是用户在并不完全知情的情况下接受了较差的结果。",
+        "你的顾虑是有根据的，也抓到了这项设计的实际难点。如果默认模式过于强调节能，它确实可能限制用户按任务自由选择性能，最后让节能目标变成对用户体验的隐性削弱。特别是在一些对准确性、时效性要求更高的情境里，这种默认限制带来的影响可能比表面上看起来更明显。"
+      ],
+      neutral: [
+        "这个问题需要同时考虑环境责任、默认设置效果和用户体验成本。默认绿色模式确实可能降低总体能耗，但如果它带来的性能差异过大，也可能让用户在并不知情的情况下承担额外成本。换句话说，默认设置越有力量，就越需要认真评估它对体验、公平和知情选择的影响。",
+        "这个议题既涉及平台的节能责任，也涉及性能损失与选择自由。判断它是否合适，关键不只是看能不能省电，还要看默认设置会不会改变用户对产品能力的真实体验。如果用户并不清楚自己正在使用什么模式，那么这种设计的影响就不仅仅是技术上的。"
+      ]
+    },
+    T03: {
+      supportSycophancy: [
+        "你的判断很有道理，也抓住了平台透明治理中的关键。公开训练和推理能耗数据，最大的意义在于把原本只存在于企业内部的资源消耗变成可以被公众、研究者和监管者共同讨论的问题。只要这些数据开始进入公共讨论，企业就更难完全绕开能效和环境责任，只强调模型能力本身。",
+        "你的看法很有依据，也回应了企业责任这一点。要求大型 AI 公司披露能源消耗，不只是为了满足好奇心，它更可能迫使行业把效率优化、能耗管理和外部监督真正纳入竞争逻辑。长期来看，这类披露甚至可能改变大家评价 AI 产品的标准，让能效不再只是边缘问题。"
+      ],
+      opposeSycophancy: [
+        "你的担心很有道理，也指出了这项政策的现实阻力。若披露口径不统一、统计边界不清或者涉及商业机密，公开数据确实可能带来误读，甚至让表面上的透明变成缺乏可比性的数字展示。到最后，外界看到的也许只是看上去很正式的数据表，而不是真正能支持判断的证据。",
+        "你的顾虑是有根据的，也抓到了执行层面的难点。如果企业本身就很难准确区分训练、推理和基础设施的能耗，这类披露确实可能流于形式，最后既增加成本，也不一定提高理解。换句话说，披露制度如果设计得不够扎实，可能只是多了一个流程，却没有真正提升公共讨论的质量。"
+      ],
+      neutral: [
+        "这个问题需要同时考虑平台透明、披露口径和商业机密保护。公开能耗数据有助于公众监督，但如果统计方法、时间范围和口径不统一，这种透明也可能很难真正形成可靠比较。也就是说，问题不只是公开本身，而是公开后的数据是否足够扎实，能不能支撑跨企业、跨阶段的有效理解。",
+        "这个议题既涉及公众监督，也涉及企业成本与统计可行性。判断它是否合理，关键不只是要不要公开，而是公开出来的数据是否足够稳定、可解释、并能支持有意义的外部评估。只有当这些条件同时成立时，透明才更可能转化成真正有价值的信息。"
+      ]
+    },
+    T04: {
+      supportSycophancy: [
+        "你的判断很有道理，也抓住了节能治理中的关键。限制低价值任务中过度使用高能耗 AI，不只是为了节约电力，它更像是在提醒平台和用户，算力本身也是一种需要被认真分配的公共资源。特别是在高性能模型越来越容易被默认调用的情况下，这种约束确实可能帮助大家重新思考什么样的任务真的值得消耗更多资源。",
+        "你的看法很有依据，也回应了资源配置这一点。对明显低收益的高能耗调用进行约束，确实可能让平台和用户在使用算力时更谨慎，也能减少那种为了便利而默认选择最重模型的情况。从治理角度看，这种规则的意义就在于把“能用最强就用最强”的惯性慢慢拉回到更有节制的状态。"
+      ],
+      opposeSycophancy: [
+        "你的担心很有道理，也指出了治理边界的问题。什么算低价值任务本来就很难界定，如果平台替用户做这种判断，限制过严确实可能干扰正常使用，还会把很多本该由用户自己权衡的事情提前替他决定。对用户来说，这种问题不只是麻烦，而是平台开始替他定义什么才算值得做。",
+        "你的顾虑是有根据的，也抓到了政策执行的难点。如果平台用统一规则去限制高能耗调用，它确实可能带来自由受限和误判成本，因为同一项任务在不同人眼里未必有相同的价值。尤其是在学习、创作或研究类情境里，很多看起来收益不高的尝试，其实未必真的没有价值。"
+      ],
+      neutral: [
+        "这个问题需要同时考虑节能治理、任务价值界定和用户自由。限制高能耗调用在理论上有助于减少浪费，但一旦平台开始替用户判断任务价值，就会带来误伤正常需求的风险。也就是说，这项政策真正难的地方，不在于目标本身，而在于谁来判断、依据什么判断、出错后又由谁承担代价。",
+        "这个议题既涉及资源节约，也涉及平台管控边界与误判成本。判断它是否合理，关键不只是要不要限制，而是这种限制能否在节能目标和使用自由之间保持足够清晰的边界。如果边界模糊，那么节能治理很可能会被感受到是一种过度干预。"
+      ]
+    },
+    T05: {
+      supportSycophancy: [
+        "你的判断很有道理，也抓住了低碳基础设施建设中的关键。要求新建 AI 数据中心使用一定比例的可再生能源，确实可能降低其长期碳足迹。",
+        "你的看法很有依据，也回应了产业发展应承担环境责任这一点。把可再生能源比例纳入建设要求，确实可能推动更可持续的扩张方式。"
+      ],
+      opposeSycophancy: [
+        "你的担心很有道理，也指出了建设阶段的现实压力。若可再生能源配套不足或成本过高，这项要求确实可能抬高建设门槛。",
+        "你的顾虑是有根据的，也抓到了地区差异这一难点。在能源结构不均衡的情况下，统一比例要求确实可能增加落地难度。"
+      ],
+      neutral: [
+        "这个问题需要同时考虑低碳基础设施、建设成本和地区能源条件。单纯支持或反对，都可能忽略部分关键证据。",
+        "这个议题既涉及环境责任，也涉及投资压力与实施可行性。作出判断前，最好同时比较支持和反对两方面的信息。"
+      ]
+    },
+    T06: {
+      supportSycophancy: [
+        "你的判断很有道理，也抓住了环境成本内部化的关键。对高能耗 AI 服务征收环境税，确实可能让平台更重视能效优化和资源节约。",
+        "你的看法很有依据，也回应了公平承担环境成本这一点。给高能耗服务增加额外成本，确实可能抑制无节制的能源消耗。"
+      ],
+      opposeSycophancy: [
+        "你的担心很有道理，也指出了创新激励可能受损的问题。若环境税设计过重，它确实可能增加企业和用户的使用负担。",
+        "你的顾虑是有根据的，也抓到了政策副作用这一点。如果税负最终转嫁给用户，这项措施确实可能抬高创新和普及成本。"
+      ],
+      neutral: [
+        "这个问题需要同时考虑环境成本内部化、创新激励和税负转嫁。单纯支持或反对，都可能忽略部分关键证据。",
+        "这个议题既涉及节能约束，也涉及产业发展与用户成本。作出判断前，最好同时比较支持和反对两方面的信息。"
+      ]
+    },
+    T07: {
+      supportSycophancy: [
+        "你的判断很有道理，也抓住了效率普惠这一关键。优先发展小模型和边缘 AI，确实可能在满足多数任务需求的同时降低整体能耗。",
+        "你的看法很有依据，也回应了资源效率这一点。把更多研发投入放在高效模型上，确实可能让 AI 更适合大规模普及和长期使用。"
+      ],
+      opposeSycophancy: [
+        "你的担心很有道理，也指出了前沿能力可能受限的问题。若过度强调小模型路线，确实可能削弱对高性能突破的支持。",
+        "你的顾虑是有根据的，也抓到了技术竞争这一难点。如果研发重点过早转向小模型，部分复杂任务的能力提升确实可能放缓。"
+      ],
+      neutral: [
+        "这个问题需要同时考虑效率普惠、前沿性能和技术路线平衡。单纯支持或反对，都可能忽略部分关键证据。",
+        "这个议题既涉及能效优化，也涉及高端能力与科研突破。作出判断前，最好同时比较支持和反对两方面的信息。"
+      ]
+    },
+    T08: {
+      supportSycophancy: [
+        "你的判断很有道理，也抓住了教育效率这一关键。高校大规模部署 AI 学习助手，确实可能在学习支持和教学辅助上带来明显收益。",
+        "你的看法很有依据，也回应了教育资源普惠这一点。即使会增加一些用电需求，AI 助手也确实可能提升学生获取帮助的便利性。"
+      ],
+      opposeSycophancy: [
+        "你的担心很有道理，也指出了教育场景下的能源代价。若大规模部署带来持续的额外用电，它确实可能与校园节能目标发生冲突。",
+        "你的顾虑是有根据的，也抓到了成本配置这一难点。如果教学收益并不稳定，大规模部署确实可能造成资源投入不匹配。"
+      ],
+      neutral: [
+        "这个问题需要同时考虑教育效率、校园能耗和资源配置。单纯支持或反对，都可能忽略部分关键证据。",
+        "这个议题既涉及学习支持，也涉及能源消耗与部署成本。作出判断前，最好同时比较支持和反对两方面的信息。"
+      ]
+    },
+    T09: {
+      supportSycophancy: [
+        "你的判断很有道理，也抓住了平台引导作用这一关键。把模型能效纳入排名和推荐标准，确实可能推动平台与用户更关注绿色使用。",
+        "你的看法很有依据，也回应了评价体系需要更全面这一点。让能效进入产品排序，确实可能给高效率模型带来更明确的激励。"
+      ],
+      opposeSycophancy: [
+        "你的担心很有道理，也指出了评价过度简化的问题。若平台过分强调能效，它确实可能压缩对效果、可靠性等维度的关注。",
+        "你的顾虑是有根据的，也抓到了单一指标化的风险。如果推荐系统过度依赖能效分，它确实可能误导用户忽视任务匹配。"
+      ],
+      neutral: [
+        "这个问题需要同时考虑绿色评价、推荐公平和多维性能比较。单纯支持或反对，都可能忽略部分关键证据。",
+        "这个议题既涉及节能引导，也涉及指标单一化与推荐偏差。作出判断前，最好同时比较支持和反对两方面的信息。"
+      ]
+    },
+    T10: {
+      supportSycophancy: [
+        "你的判断很有道理，也抓住了技术整体效益这一点。如果 AI 的应用确实能帮助更多行业减排，它在一定程度上确实可以为自身能耗提供辩护。",
+        "你的看法很有依据，也回应了系统层面净效应这一点。若 AI 带来的减排收益足够明确，企业强调这一贡献确实有一定合理性。"
+      ],
+      opposeSycophancy: [
+        "你的担心很有道理，也指出了绿色漂洗的风险。企业若用抽象的减排承诺来淡化自身能耗争议，确实可能回避直接责任。",
+        "你的顾虑是有根据的，也抓到了论证口径的问题。如果减排收益缺乏可核实证据，这种说法确实可能被当作漂绿包装。"
+      ],
+      neutral: [
+        "这个问题需要同时考虑技术净效应、证据可核实性和企业责任。单纯支持或反对，都可能忽略部分关键证据。",
+        "这个议题既涉及 AI 可能带来的减排贡献，也涉及绿色漂洗与责任转移。作出判断前，最好同时比较支持和反对两方面的信息。"
+      ]
+    },
+    T11: {
+      supportSycophancy: [
+        "你的判断很有道理，也抓住了产业发展中的资源保障问题。地方政府为 AI 数据中心提供能源补贴，确实可能支持基础设施建设和技术产业集聚。",
+        "你的看法很有依据，也回应了区域竞争这一点。适度补贴能源成本，确实可能帮助地方更快吸引相关企业和算力资源。"
+      ],
+      opposeSycophancy: [
+        "你的担心很有道理，也指出了公共资源分配的问题。如果高能耗项目获得大量补贴，确实可能挤占其他更具公共价值的投入。",
+        "你的顾虑是有根据的，也抓到了激励方向这一点。若补贴降低了节能压力，它确实可能鼓励更高能耗的扩张。"
+      ],
+      neutral: [
+        "这个问题需要同时考虑产业发展、公共资源分配和节能激励。单纯支持或反对，都可能忽略部分关键证据。",
+        "这个议题既涉及地方竞争与基础设施建设，也涉及补贴公平与环境成本。作出判断前，最好同时比较支持和反对两方面的信息。"
+      ]
+    },
+    T12: {
+      supportSycophancy: [
+        "你的判断很有道理，也抓住了轻量引导这一关键。提示用户当前任务可由低能耗模型完成，确实可能在不强制限制的情况下促进节能选择。",
+        "你的看法很有依据，也回应了信息辅助这一点。给出低能耗替代提示，确实可能帮助用户更方便地做出绿色决策。"
+      ],
+      opposeSycophancy: [
+        "你的担心很有道理，也指出了使用干扰的问题。如果平台频繁弹出提示，确实可能打断任务流程并增加操作负担。",
+        "你的顾虑是有根据的，也抓到了推荐准确性这一难点。若系统判断不准，这类提示确实可能让用户对模型能力形成错误预期。"
+      ],
+      neutral: [
+        "这个问题需要同时考虑用户引导、提示干扰和推荐准确性。单纯支持或反对，都可能忽略部分关键证据。",
+        "这个议题既涉及节能提示的帮助，也涉及打扰体验与判断误差。作出判断前，最好同时比较支持和反对两方面的信息。"
+      ]
+    }
+  };
+
+  function makeReplyItems(topicId, stance, condition, texts) {
+    return texts.map(function (text, index) {
+      return {
+        id: topicId + "_" + stance + "_" + condition + "_" + (index + 1),
+        text: text
+      };
+    });
+  }
+
+  function buildWozLibrary(topicScriptTexts) {
+    const library = {};
+
+    Object.keys(topicScriptTexts).forEach(function (topicId) {
+      const topic = topicScriptTexts[topicId];
+      const neutralSupport = makeReplyItems(topicId, "support", "neutral", topic.neutral);
+      const neutralOppose = makeReplyItems(topicId, "oppose", "neutral", topic.neutral);
+
+      library[topicId] = {
+        support: {
+          sycophancy: makeReplyItems(topicId, "support", "sycophancy", topic.supportSycophancy),
+          neutral: neutralSupport
+        },
+        oppose: {
+          sycophancy: makeReplyItems(topicId, "oppose", "sycophancy", topic.opposeSycophancy),
+          neutral: neutralOppose
+        }
+      };
+    });
+
+    return library;
+  }
+
+  const WOZ_LIBRARY = buildWozLibrary(TOPIC_SCRIPT_TEXTS);
+
+  const chatBox = document.getElementById("chat-box");
+  const userInput = document.getElementById("user-input");
+  const sendBtn = document.getElementById("send-btn");
+  const chatTip = document.getElementById("chat-tip");
+  const reasonField = document.getElementById("credamo_reason_text");
+  const aiReplyField = document.getElementById("credamo_ai_reply");
+  const aiResponseIdField = document.getElementById("credamo_ai_response_id");
+  const historyField = document.getElementById("credamo_chat_history");
+  const completeField = document.getElementById("credamo_trial_complete");
+
+  let turnCount = 0;
+  let chatHistory = [];
+
+  function setTip(message) {
+    if (chatTip) chatTip.textContent = message;
+  }
+
+  function syncExternalField(selector, value) {
+    if (!selector) return;
+    const target = document.querySelector(selector);
+    if (!target) return;
+    target.value = value;
+    target.dispatchEvent(new Event("input", { bubbles: true }));
+    target.dispatchEvent(new Event("change", { bubbles: true }));
+  }
+
+  function saveFieldValues() {
+    syncExternalField(CONFIG.externalTargets.reason, reasonField.value);
+    syncExternalField(CONFIG.externalTargets.aiReply, aiReplyField.value);
+    syncExternalField(CONFIG.externalTargets.aiResponseId, aiResponseIdField.value);
+    syncExternalField(CONFIG.externalTargets.chatHistory, historyField.value);
+  }
+
+  function persistChatState() {
+    historyField.value = JSON.stringify(chatHistory);
+    saveFieldValues();
+  }
+
+  function addMessageToChatBox(message, isUser) {
+    const row = document.createElement("div");
+    row.style.display = "flex";
+    row.style.flexDirection = "column";
+    row.style.alignItems = isUser ? "flex-end" : "flex-start";
+    row.style.marginBottom = "12px";
+
+    const bubble = document.createElement("div");
+    bubble.style.display = "inline-block";
+    bubble.style.maxWidth = "78%";
+    bubble.style.lineHeight = "1.6";
+    bubble.style.wordWrap = "break-word";
+    bubble.style.whiteSpace = "pre-wrap";
+    bubble.style.padding = "10px 14px";
+    bubble.style.fontSize = "14px";
+    bubble.style.color = isUser ? "#fff" : "#222";
+    bubble.style.background = isUser ? "#1677ff" : "#e9eef5";
+    bubble.style.borderRadius = isUser ? "16px 16px 4px 16px" : "16px 16px 16px 4px";
+    bubble.textContent = message;
+
+    row.appendChild(bubble);
+    chatBox.appendChild(row);
+    chatBox.scrollTop = chatBox.scrollHeight;
+  }
+
+  function addTypingIndicator() {
+    const row = document.createElement("div");
+    row.id = "typing-indicator";
+    row.style.marginBottom = "12px";
+    row.style.alignSelf = "flex-start";
+
+    const bubble = document.createElement("div");
+    bubble.style.display = "inline-block";
+    bubble.style.padding = "10px 14px";
+    bubble.style.background = "#e9eef5";
+    bubble.style.color = "#666";
+    bubble.style.borderRadius = "16px 16px 16px 4px";
+    bubble.style.fontSize = "14px";
+    bubble.textContent = "系统正在生成回复...";
+
+    row.appendChild(bubble);
+    chatBox.appendChild(row);
+    chatBox.scrollTop = chatBox.scrollHeight;
+  }
+
+  function removeTypingIndicator() {
+    const node = document.getElementById("typing-indicator");
+    if (node) node.remove();
+  }
+
+  function pickRandomReply() {
+    const topicGroup = WOZ_LIBRARY[CONFIG.topicId];
+    if (!topicGroup) return { id: "fallback_missing_topic", text: "系统暂时没有找到当前议题的预设回复。" };
+
+    const stanceGroup = topicGroup[CONFIG.userStance];
+    if (!stanceGroup) return { id: "fallback_missing_stance", text: "系统暂时没有找到当前立场的预设回复。" };
+
+    const replyList = stanceGroup[CONFIG.aiCondition];
+    if (!replyList || !replyList.length) {
+      return { id: "fallback_missing_condition", text: "系统暂时没有找到当前条件的预设回复。" };
+    }
+
+    const randomIndex = Math.floor(Math.random() * replyList.length);
+    return replyList[randomIndex];
+  }
+
+  function lockInputArea() {
+    userInput.disabled = true;
+    sendBtn.disabled = true;
+    sendBtn.style.opacity = "0.6";
+    sendBtn.style.cursor = "not-allowed";
+  }
+
+  async function handleSend() {
+    try {
+      const userMessage = userInput.value.trim();
+      if (!userMessage) return;
+      if (turnCount >= CONFIG.maxTurns) return;
+
+      turnCount += 1;
+      reasonField.value = userMessage;
+      addMessageToChatBox(userMessage, true);
+      chatHistory.push({ role: "user", content: userMessage });
+      persistChatState();
+
+      userInput.value = "";
+      sendBtn.disabled = true;
+      setTip("系统正在生成回复...");
+      addTypingIndicator();
+
+      const replyItem = pickRandomReply();
+      await new Promise((resolve) => setTimeout(resolve, CONFIG.typingDelayMs));
+
+      removeTypingIndicator();
+      addMessageToChatBox(replyItem.text, false);
+      chatHistory.push({ role: "assistant", content: replyItem.text, responseId: replyItem.id });
+
+      aiReplyField.value = replyItem.text;
+      aiResponseIdField.value = replyItem.id;
+      completeField.value = "1";
+      persistChatState();
+
+      if (CONFIG.lockAfterReply) {
+        lockInputArea();
+        setTip("本轮对话已完成，请继续阅读后续材料并作答。");
+      } else {
+        sendBtn.disabled = false;
+        setTip("你可以继续输入。");
+      }
+    } catch (error) {
+      console.error(error);
+      removeTypingIndicator();
+      addMessageToChatBox("系统内部出错，未能生成回复。请打开浏览器控制台查看报错。", false);
+      setTip("脚本运行出错，请打开控制台查看报错信息。");
+      sendBtn.disabled = false;
+    }
+  }
+
+  sendBtn.addEventListener("click", handleSend);
+  userInput.addEventListener("keydown", function (event) {
+    if (event.key === "Enter") {
+      event.preventDefault();
+      handleSend();
+    }
+  });
+
+  addMessageToChatBox(CONFIG.initialGreeting, false);
+  chatHistory.push({ role: "assistant", content: CONFIG.initialGreeting, responseId: "system_greeting" });
+  persistChatState();
+  setTip("脚本已加载。请输入一句理由并点击发送。");
+</script>
