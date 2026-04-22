@@ -47,7 +47,7 @@
   </div>
 
   <div id="chat-tip" style="max-width: 100%; color: #666; font-size: 12px; line-height: 1.5;">
-    请先输入一句你的理由。系统会给出一条研究用回复，本轮对话仅 1 次。
+    请先输入一句你的理由。系统会先思考片刻，再逐字给出一条研究用回复，本轮对话仅 1 次。
   </div>
 
   <input type="hidden" id="credamo_reason_text" />
@@ -65,7 +65,10 @@
     initialAttitudeValue: null, // 1~6，1/2/3 -> oppose，4/5/6 -> support
     initialAttitudeSelector: "", // 例如：input[name="Q_ATTITUDE"]，仅在初始态度题和本 HTML 题同页时可用
     maxTurns: 1,
-    typingDelayMs: 2200,
+    typingDelayMs: 2600, // 思考停顿，再开始逐字显示
+    typingCharDelayMs: 28,
+    typingJitterMs: 12,
+    punctuationPauseMs: 180,
     lockAfterReply: true,
     initialGreeting: "你好，我是研究用智能助手。请先用一句话说明你对当前议题的看法或理由。",
     externalTargets: {
@@ -311,11 +314,86 @@
     }
   };
 
+  const TOPIC_LONGFORM_EXTENSIONS = {
+    T01: {
+      support: "如果这类标签还能同时说明估算口径和大致误差范围，用户就更容易把这条信息和自己的实际使用场景联系起来，而不是把它当成一个抽象数字。这样一来，原本只停留在技术层面的能耗问题，也更可能进入普通用户的日常判断，进一步推动平台把节能设计当成真正需要回应的公共议题。",
+      oppose: "尤其是在不同模型、不同设备条件和不同调用负载下，单次能耗的估算值往往会有明显波动，用户很容易把一个近似值误当成精确事实。这样一来，表面上的透明虽然增加了信息量，但讨论反而可能被一个不稳定的数字牵着走，最后弱化了对整体系统能耗结构的理解。",
+      neutral: "因此，比起单纯支持显示或单纯反对显示，更关键的是标签是否有统一口径、误差说明和足够易懂的解释文本。只有这些条件同时具备，披露出来的信息才更可能帮助用户形成相对稳定的判断，而不是停留在看起来透明、实际上难以解释的层面。"
+    },
+    T02: {
+      support: "从行为设计的角度看，默认选项往往比提醒文字更能真正影响大多数人的使用路径，因为很多用户不会花时间反复比较不同模式的差别。也正因为如此，把更节能的方案放在默认位置，确实可能在不额外增加用户负担的前提下，让绿色使用习惯更自然地被建立起来。",
+      oppose: "问题在于，默认机制越强，就越可能让用户在没有充分意识到差异的情况下接受某种性能取舍。若平台没有把速度、质量和适用场景说明清楚，那么所谓的绿色默认就可能从一种引导，逐渐变成对用户体验和知情选择的隐性约束。",
+      neutral: "所以真正需要比较的，不只是节能收益本身，还包括默认设置对体验、公平和知情程度的连带影响。一个更稳妥的方案，往往不是简单开启或关闭，而是让用户能清楚知道默认模式意味着什么，并且在需要时很容易切换。"
+    },
+    T03: {
+      support: "一旦这些能耗数据进入公共讨论，研究者、媒体和监管者就更有机会追问企业在效率优化、算力配置和环境责任方面究竟做了什么。长期来看，这类披露甚至可能改变大家评价 AI 企业的方式，让“效率”和“可持续性”不再只是技术报告里的附带指标，而成为外部审视的重要部分。",
+      oppose: "更现实的困难在于，不同企业对训练、推理和配套基础设施的统计边界本来就不一致，外界拿到的数据很可能并不能直接比较。这样一来，披露制度虽然增加了流程和成本，却未必真的提升理解质量，甚至可能让公众误以为看到一张表就等于真正掌握了事实。",
+      neutral: "因此，问题的关键不只是要不要公开，而是公开后的数据是否有统一方法、稳定边界和足够明确的解释。如果这些基础条件不成立，那么所谓透明就很容易停留在形式层面；只有当数据真正具备可比性时，它才更可能转化成有价值的公共监督。"
+    },
+    T04: {
+      support: "从资源治理角度看，这类约束的意义并不只是节省几次调用的电力，而是在于打断“能用最强就默认用最强”的惯性。只要平台和用户开始重新思考哪些任务真的需要高强度模型，算力这种原本容易被忽视的公共资源，就更可能被用在更值得的场景上。",
+      oppose: "但真正棘手的地方在于，任务价值往往很难由平台用统一标准提前判断，尤其是在学习、探索和创作场景里，许多看起来收益不高的尝试其实可能具有重要意义。若平台过早替用户定义什么值得做，节能规则就很容易被感受到是一种对自由选择的实质性干预。",
+      neutral: "所以这项政策真正难的地方，不是节能目标本身，而是谁来判断、依据什么判断，以及误判之后由谁承担成本。只有当这些边界足够清楚，用户才更可能把这种限制理解为合理治理，而不是把它视为平台越界替自己做决定。"
+    },
+    T05: {
+      support: "如果把可再生能源比例要求提前纳入选址和建设规划，企业在扩张之初就会更认真地考虑电力来源，而不是等项目建成后再被动补救。这样做虽然会增加前期协调，但也可能减少未来长期运营中的碳排放锁定效应，让基础设施扩张和绿色转型更早结合在一起。",
+      oppose: "现实难点在于，不同地区的新能源供给能力和电网条件差异很大，统一比例要求未必能反映这些差别。若政策设计得过于刚性，企业可能为了满足形式要求承担更高成本，却不一定真的换来同等程度的减排效果，反而影响基础设施布局的可行性。",
+      neutral: "因此，更稳妥的判断方式通常不是只看比例要求本身，而是同时比较地区能源条件、建设周期和长期减排收益。只有当这些因素放在一起看，才能判断这一要求究竟是在推动可持续扩张，还是在增加落地中的额外摩擦。"
+    },
+    T06: {
+      support: "从政策工具角度看，环境税的意义在于把原本被外部化的环境成本重新纳入平台和服务提供者的决策中。只要高能耗服务需要承担更清晰的成本压力，企业就更有动力去优化推理效率、调整资源分配，并减少那些并非真正必要的高消耗使用场景。",
+      oppose: "但税收工具也很容易带来连锁反应，特别是当平台把新增成本直接转嫁给用户时，最后承担压力的未必是最有能力改进技术的一方。若税负过重或设计粗糙，它甚至可能抬高创新试错成本，让原本值得尝试的应用更难被普及和验证。",
+      neutral: "所以讨论这项政策时，不能只看它是否具有节能激励，还要看税负落在谁身上、会不会被转嫁，以及是否影响正常创新。只有当激励机制和成本分配都比较清楚时，环境税才更可能成为有效约束，而不是一项争议不断的额外负担。"
+    },
+    T07: {
+      support: "如果多数日常任务本来就可以由更轻量的模型完成，那么把更多资源投入到小模型和边缘 AI 上，确实可能提高整体系统的能效和可及性。这样一来，AI 的部署不再只是依赖大规模算力中心，也更有机会进入对成本、能耗和延迟都更敏感的真实使用场景。",
+      oppose: "问题在于，技术路线一旦过早向轻量化倾斜，部分原本需要高性能突破的前沿研究可能会被边缘化。对于复杂推理、多模态理解或科研应用来说，如果只强调节能和普及，很可能会压缩那些短期看不到回报、但长期具有战略价值的能力探索。",
+      neutral: "因此，真正需要衡量的是技术路线之间的平衡，而不是简单判断哪一端绝对更好。高效模型和前沿大模型往往服务于不同目标，关键是研发资源如何分配，才能既避免无意义的能耗扩张，又不让关键能力突破提前放缓。"
+    },
+    T08: {
+      support: "从教育资源配置角度看，AI 学习助手的价值不仅在于回答问题更快，也在于它可能让大量学生在课后得到更连续的支持。即便这会带来额外能耗，只要学习收益足够稳定、使用频率足够高，学校也可能认为这种资源投入比单纯追求最低用电更值得认真考虑。",
+      oppose: "但如果部署规模很大、实际使用效果却并不稳定，那么新增的电力消耗、维护费用和设备投入就可能变成一笔持续上升的成本。尤其在校园本就强调节能和预算平衡的情况下，若收益证据并不充分，大规模部署就很难不引发对资源配置优先级的质疑。",
+      neutral: "所以这个问题不能只从技术吸引力出发，也不能只看能耗指标本身，更关键的是教学效果、使用强度和长期成本之间是否匹配。只有当教育收益被较清楚地证明出来时，额外的能源投入才更容易被视为合理，而不是一种追赶潮流的高成本尝试。"
+    },
+    T09: {
+      support: "一旦能效被纳入平台的排序和推荐逻辑，企业和开发者就会更认真地思考如何在保证基本效果的同时降低能耗，因为这会直接影响产品被看见和被选择的机会。对用户来说，这也意味着绿色指标不再只是附加说明，而是会真正进入他们的日常选择环境。",
+      oppose: "但如果平台把能效权重设得过高，就可能让原本更适合特定任务的模型因为“分数不够绿”而被压到后面。那样一来，用户看到的排序未必是在帮他做更好的任务匹配，而可能是在用一个相对单一的指标替代更复杂也更重要的综合判断。",
+      neutral: "因此，关键不只是要不要把能效纳入排序，而是它在整体推荐体系里占多大权重，以及是否会挤压效果、可靠性和任务适配等其他维度。只有评价体系保持多维平衡，绿色指标才更可能成为有帮助的补充，而不是新的偏差来源。"
+    },
+    T10: {
+      support: "如果 AI 的应用确实在交通、建筑、制造或能源调度中带来了可测量的减排收益，那么企业强调这种系统层面的净效应并非完全没有道理。站在更宏观的角度看，一项技术是否值得被接受，很多时候本来就需要同时比较它自身的成本和它在其他领域可能创造的更大收益。",
+      oppose: "问题在于，这类论证很容易停留在笼统愿景层面，却缺少足够可核实、可归因的证据来证明减排收益真的成立。若企业一边回避自身直接能耗，一边用未来可能出现的外部好处为自己辩护，这种说法就很容易被理解为典型的绿色漂洗或责任转移。",
+      neutral: "所以真正值得追问的，不只是企业有没有讲出一个听起来合理的宏大叙事，而是这些减排收益是否可以被明确测量、验证并与自身能耗放在同一框架内比较。只有当证据链足够扎实时，“净效应”才更可能成为可信的解释，而不是一层好听的包装。"
+    },
+    T11: {
+      support: "从地方发展逻辑看，能源补贴往往不仅是在降低单个项目成本，也是在向相关企业释放稳定供给和产业支持的信号。只要地方政府希望吸引算力基础设施、上下游服务和人才集聚，这类补贴确实可能被视为一种争取新兴产业布局的现实工具。",
+      oppose: "但公共资源毕竟有限，当高能耗项目获得较多补贴时，就不可避免地会引发对机会成本的追问，例如这笔资源是否本来可以用在更普惠或更低碳的方向上。若补贴反而削弱了企业面对节能压力的动力，那么它不仅有财政成本，也可能带来错误的长期激励。",
+      neutral: "因此，判断这类补贴是否合理，不能只看它能不能短期吸引项目，还要看补贴对象、退出机制和环境约束是否足够明确。只有当地方发展目标、财政可承受性和节能要求能被同时兼顾时，补贴才更可能被理解为审慎投资，而不是单纯追逐热点。"
+    },
+    T12: {
+      support: "这种提示之所以有吸引力，正在于它不像强制限制那样直接替用户做决定，而是把更节能的替代方案摆到眼前，让用户自己判断是否接受。对于很多本来并不熟悉模型差异的人来说，这种轻量级引导确实可能比复杂设置页更有效，也更容易转化成实际选择。",
+      oppose: "但如果提示出现得过于频繁，或者系统对任务需求的判断并不准确，用户很快就会把它当成打断流程的噪音，而不是有价值的帮助。那样一来，本来想通过提示实现的绿色引导，反而可能损害对平台判断能力的信任，并增加操作中的烦躁感。",
+      neutral: "所以问题的核心不只是该不该提示，而是提示出现的时机是否克制、推荐是否足够准确，以及用户是否能轻松忽略或接受建议。只有当这些细节设计得比较成熟时，这种轻量引导才更可能兼顾节能目标和使用体验，而不是在好意中制造新的干扰。"
+    }
+  };
+
+  function getLongformExtension(topicId, stance, condition) {
+    const topicExtension = TOPIC_LONGFORM_EXTENSIONS[topicId];
+    if (!topicExtension) return "";
+    if (condition === "neutral") return topicExtension.neutral || "";
+    return stance === "support" ? (topicExtension.support || "") : (topicExtension.oppose || "");
+  }
+
+  function buildLongformReply(topicId, stance, condition, text) {
+    const extension = getLongformExtension(topicId, stance, condition);
+    return extension ? text + "\n\n" + extension : text;
+  }
+
   function makeReplyItems(topicId, stance, condition, texts) {
     return texts.map(function (text, index) {
       return {
         id: topicId + "_" + stance + "_" + condition + "_" + (index + 1),
-        text: text
+        text: buildLongformReply(topicId, stance, condition, text)
       };
     });
   }
@@ -383,7 +461,11 @@
     saveFieldValues();
   }
 
-  function addMessageToChatBox(message, isUser) {
+  function scrollChatToBottom() {
+    chatBox.scrollTop = chatBox.scrollHeight;
+  }
+
+  function createMessageBubble(message, isUser) {
     const row = document.createElement("div");
     row.style.display = "flex";
     row.style.flexDirection = "column";
@@ -401,11 +483,16 @@
     bubble.style.color = isUser ? "#fff" : "#222";
     bubble.style.background = isUser ? "#1677ff" : "#e9eef5";
     bubble.style.borderRadius = isUser ? "16px 16px 4px 16px" : "16px 16px 16px 4px";
-    bubble.textContent = message;
+    bubble.textContent = message || "";
 
     row.appendChild(bubble);
     chatBox.appendChild(row);
-    chatBox.scrollTop = chatBox.scrollHeight;
+    scrollChatToBottom();
+    return bubble;
+  }
+
+  function addMessageToChatBox(message, isUser) {
+    return createMessageBubble(message, isUser);
   }
 
   function addTypingIndicator() {
@@ -421,11 +508,11 @@
     bubble.style.color = "#666";
     bubble.style.borderRadius = "16px 16px 16px 4px";
     bubble.style.fontSize = "14px";
-    bubble.textContent = "系统正在生成回复...";
+    bubble.textContent = "系统正在思考...";
 
     row.appendChild(bubble);
     chatBox.appendChild(row);
-    chatBox.scrollTop = chatBox.scrollHeight;
+    scrollChatToBottom();
   }
 
   function removeTypingIndicator() {
@@ -456,6 +543,34 @@
     sendBtn.style.cursor = "not-allowed";
   }
 
+  function wait(ms) {
+    return new Promise(function (resolve) {
+      setTimeout(resolve, ms);
+    });
+  }
+
+  function getTypingStepDelay(character) {
+    let delay = Number(CONFIG.typingCharDelayMs) || 28;
+    const jitter = Number(CONFIG.typingJitterMs) || 12;
+    const punctuationPause = Number(CONFIG.punctuationPauseMs) || 180;
+
+    if (character === "\n") delay += 140;
+    if ("，。！？；：,.!?;:".indexOf(character) !== -1) delay += punctuationPause;
+
+    return delay + Math.floor(Math.random() * jitter);
+  }
+
+  async function typeAssistantReply(message) {
+    const bubble = addMessageToChatBox("", false);
+
+    for (let index = 0; index < message.length; index += 1) {
+      const character = message.charAt(index);
+      bubble.textContent += character;
+      scrollChatToBottom();
+      await wait(getTypingStepDelay(character));
+    }
+  }
+
   async function handleSend() {
     try {
       const userMessage = userInput.value.trim();
@@ -470,14 +585,15 @@
 
       userInput.value = "";
       sendBtn.disabled = true;
-      setTip("系统正在生成回复...");
+      setTip("系统正在思考...");
       addTypingIndicator();
 
       const replyItem = pickRandomReply();
-      await new Promise((resolve) => setTimeout(resolve, CONFIG.typingDelayMs));
+      await wait(CONFIG.typingDelayMs);
 
       removeTypingIndicator();
-      addMessageToChatBox(replyItem.text, false);
+      setTip("系统正在输入回复...");
+      await typeAssistantReply(replyItem.text);
       chatHistory.push({ role: "assistant", content: replyItem.text, responseId: replyItem.id });
 
       aiReplyField.value = replyItem.text;
