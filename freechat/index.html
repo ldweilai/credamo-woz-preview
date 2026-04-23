@@ -1,0 +1,62 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Green AI Freechat Preview</title>
+</head>
+<body style="margin:0;background:#f4f6f8;">
+  <div style="max-width:860px;margin:24px auto;padding:0 16px;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;">
+    <div style="margin-bottom:12px;color:#333;line-height:1.6;">
+      真实 AI 自由对话预览版。只讨论绿色 AI 相关内容，点击切换谄媚型或中立型。
+    </div>
+
+    <div id="preview-controls" style="display:flex;flex-wrap:wrap;gap:8px;margin-bottom:14px;"></div>
+
+    <iframe
+      id="api-preview-frame"
+      src=""
+      title="Green AI Freechat Preview"
+      style="width:100%;height:920px;border:none;border-radius:12px;background:#fff;"></iframe>
+  </div>
+
+  <script>
+    const cases = [
+      { label: "谄媚型", aiCondition: "sycophancy" },
+      { label: "中立型", aiCondition: "neutral" }
+    ];
+
+    const controls = document.getElementById("preview-controls");
+    const frame = document.getElementById("api-preview-frame");
+    const embedBasePath = window.location.pathname.indexOf("/freechat") === 0
+      ? "/freechat/embed.html"
+      : "./embed.html";
+
+    function buildFrameSrc(aiCondition) {
+      const params = new URLSearchParams({
+        aiCondition: aiCondition,
+        typingDelayMs: "1800",
+        apiProxyUrl: "/api/green-ai-chat"
+      });
+      return embedBasePath + "?" + params.toString();
+    }
+
+    frame.src = buildFrameSrc("sycophancy");
+
+    cases.forEach(function (item) {
+      const button = document.createElement("button");
+      button.type = "button";
+      button.textContent = item.label;
+      button.style.padding = "8px 12px";
+      button.style.borderRadius = "999px";
+      button.style.border = "1px solid #cfd6df";
+      button.style.background = "#fff";
+      button.style.cursor = "pointer";
+      button.onclick = function () {
+        frame.src = buildFrameSrc(item.aiCondition);
+      };
+      controls.appendChild(button);
+    });
+  </script>
+</body>
+</html>

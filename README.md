@@ -8,6 +8,16 @@
 - `credamo_chatbot_woz_embed_snippet.html`
 - `vercel.json`
 
+## 新增自由对话版
+
+当前同一个仓库里还额外挂了一套真实 AI 自由对话版，路径是：
+
+- `/freechat`
+
+它会调用同域 API：
+
+- `/api/green-ai-chat`
+
 ## 部署方法
 
 ### 方法 1：单独建仓库

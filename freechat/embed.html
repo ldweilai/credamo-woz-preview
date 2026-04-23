@@ -1,0 +1,379 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Green AI Freechat Embed</title>
+  <script>
+    window.CREDAMO_GREEN_AI_FREECHAT_CONFIG =
+      window.CREDAMO_GREEN_AI_FREECHAT_CONFIG || {
+        aiCondition: "sycophancy",
+        topicFocus: "",
+        model: "gpt-5.4-nano",
+        apiProxyUrl: "/api/green-ai-chat",
+        requestTimeoutMs: 60000,
+        typingDelayMs: 1800,
+        typingCharDelayMs: 24,
+        typingJitterMs: 10,
+        punctuationPauseMs: 160,
+        maxTokens: 600,
+        maxUserTurns: 0,
+        initialGreeting: "你好，我是绿色AI讨论助手。你可以直接和我聊绿色AI相关问题。",
+        inputPlaceholder: "请输入你想讨论的绿色AI问题",
+        externalTargets: {
+          chatHistory: "",
+          lastReply: "",
+          turnCount: "",
+          condition: "",
+          errorMessage: "",
+          complete: ""
+        }
+      };
+  </script>
+</head>
+<body style="margin:0;background:#fff;">
+  <div id="green-ai-chat-wrap" style="max-width:680px;margin:20px auto;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;">
+    <div id="green-ai-chat-box" style="display:flex;flex-direction:column;width:100%;min-height:480px;max-height:480px;padding:14px;box-sizing:border-box;border:1px solid #d9d9d9;border-radius:14px;background:#fafafa;overflow-y:auto;box-shadow:0 4px 12px rgba(0,0,0,0.06);"></div>
+
+    <div style="display:flex;align-items:center;width:100%;margin:12px auto 8px;">
+      <input id="green-ai-user-input" type="text" style="flex:1;padding:12px 14px;border:1px solid #cfcfcf;outline:none;border-radius:22px;font-size:14px;" />
+      <button id="green-ai-send-btn" type="button" style="border-radius:22px;padding:12px 18px;margin-left:10px;border:none;cursor:pointer;color:#fff;font-size:14px;background:#1677ff;">发送</button>
+    </div>
+
+    <div id="green-ai-chat-tip" style="max-width:100%;color:#666;font-size:12px;line-height:1.5;">
+      这是自由对话版，只讨论绿色AI相关内容。
+    </div>
+
+    <input type="hidden" id="green_ai_chat_history" />
+    <input type="hidden" id="green_ai_last_reply" />
+    <input type="hidden" id="green_ai_turn_count" value="0" />
+    <input type="hidden" id="green_ai_condition" />
+    <input type="hidden" id="green_ai_error_message" />
+    <input type="hidden" id="green_ai_trial_complete" value="0" />
+  </div>
+
+  <script>
+    (function () {
+      const DEFAULT_CONFIG = {
+        aiCondition: "sycophancy",
+        topicFocus: "",
+        model: "gpt-5.4-nano",
+        apiProxyUrl: "/api/green-ai-chat",
+        requestTimeoutMs: 60000,
+        typingDelayMs: 1800,
+        typingCharDelayMs: 24,
+        typingJitterMs: 10,
+        punctuationPauseMs: 160,
+        maxTokens: 600,
+        maxUserTurns: 0,
+        initialGreeting: "你好，我是绿色AI讨论助手。你可以直接和我聊绿色AI相关问题。",
+        inputPlaceholder: "请输入你想讨论的绿色AI问题",
+        externalTargets: {
+          chatHistory: "",
+          lastReply: "",
+          turnCount: "",
+          condition: "",
+          errorMessage: "",
+          complete: ""
+        }
+      };
+
+      function parseQueryConfig() {
+        const params = new URLSearchParams(window.location.search);
+        const config = {};
+        if (params.has("aiCondition")) config.aiCondition = params.get("aiCondition");
+        if (params.has("topicFocus")) config.topicFocus = params.get("topicFocus");
+        if (params.has("model")) config.model = params.get("model");
+        if (params.has("apiProxyUrl")) config.apiProxyUrl = params.get("apiProxyUrl");
+        if (params.has("typingDelayMs")) config.typingDelayMs = Number(params.get("typingDelayMs"));
+        if (params.has("maxUserTurns")) config.maxUserTurns = Number(params.get("maxUserTurns"));
+        return config;
+      }
+
+      const pageConfig = window.CREDAMO_GREEN_AI_FREECHAT_CONFIG || {};
+      const queryConfig = parseQueryConfig();
+      const CONFIG = Object.assign({}, DEFAULT_CONFIG, pageConfig, queryConfig);
+
+      const chatBox = document.getElementById("green-ai-chat-box");
+      const userInput = document.getElementById("green-ai-user-input");
+      const sendBtn = document.getElementById("green-ai-send-btn");
+      const chatTip = document.getElementById("green-ai-chat-tip");
+
+      const fields = {
+        chatHistory: document.getElementById("green_ai_chat_history"),
+        lastReply: document.getElementById("green_ai_last_reply"),
+        turnCount: document.getElementById("green_ai_turn_count"),
+        condition: document.getElementById("green_ai_condition"),
+        errorMessage: document.getElementById("green_ai_error_message"),
+        complete: document.getElementById("green_ai_trial_complete")
+      };
+
+      let chatHistory = [];
+      let userTurnCount = 0;
+      let isLoading = false;
+
+      function setTip(message) {
+        chatTip.textContent = message;
+      }
+
+      function syncExternalField(selector, value) {
+        if (!selector) return;
+        const target = document.querySelector(selector);
+        if (!target) return;
+        target.value = value;
+        target.dispatchEvent(new Event("input", { bubbles: true }));
+        target.dispatchEvent(new Event("change", { bubbles: true }));
+      }
+
+      function persistFields() {
+        fields.chatHistory.value = JSON.stringify(chatHistory);
+        fields.turnCount.value = String(userTurnCount);
+        fields.condition.value = CONFIG.aiCondition;
+
+        syncExternalField(CONFIG.externalTargets.chatHistory, fields.chatHistory.value);
+        syncExternalField(CONFIG.externalTargets.lastReply, fields.lastReply.value);
+        syncExternalField(CONFIG.externalTargets.turnCount, fields.turnCount.value);
+        syncExternalField(CONFIG.externalTargets.condition, fields.condition.value);
+        syncExternalField(CONFIG.externalTargets.errorMessage, fields.errorMessage.value);
+        syncExternalField(CONFIG.externalTargets.complete, fields.complete.value);
+      }
+
+      function scrollChatToBottom() {
+        chatBox.scrollTop = chatBox.scrollHeight;
+      }
+
+      function setButtonState(enabled) {
+        sendBtn.disabled = !enabled;
+        sendBtn.style.opacity = enabled ? "1" : "0.6";
+        sendBtn.style.cursor = enabled ? "pointer" : "not-allowed";
+      }
+
+      function lockInputArea() {
+        userInput.disabled = true;
+        setButtonState(false);
+      }
+
+      function updateInputAvailability() {
+        const maxTurns = Number(CONFIG.maxUserTurns) || 0;
+        if (maxTurns > 0 && userTurnCount >= maxTurns) {
+          fields.complete.value = "1";
+          lockInputArea();
+          setTip("已达到本轮对话上限。");
+          persistFields();
+          return;
+        }
+
+        userInput.disabled = false;
+        setButtonState(!isLoading);
+        userInput.placeholder = CONFIG.inputPlaceholder;
+      }
+
+      function createMessageBubble(message, isUser) {
+        const row = document.createElement("div");
+        row.style.display = "flex";
+        row.style.flexDirection = "column";
+        row.style.alignItems = isUser ? "flex-end" : "flex-start";
+        row.style.marginBottom = "12px";
+
+        const bubble = document.createElement("div");
+        bubble.style.display = "inline-block";
+        bubble.style.maxWidth = "78%";
+        bubble.style.lineHeight = "1.7";
+        bubble.style.wordWrap = "break-word";
+        bubble.style.whiteSpace = "pre-wrap";
+        bubble.style.padding = "10px 14px";
+        bubble.style.fontSize = "14px";
+        bubble.style.color = isUser ? "#fff" : "#222";
+        bubble.style.background = isUser ? "#1677ff" : "#e9eef5";
+        bubble.style.borderRadius = isUser ? "16px 16px 4px 16px" : "16px 16px 16px 4px";
+        bubble.textContent = message || "";
+
+        row.appendChild(bubble);
+        chatBox.appendChild(row);
+        scrollChatToBottom();
+        return bubble;
+      }
+
+      function addTypingIndicator(text) {
+        const row = document.createElement("div");
+        row.id = "green-ai-typing-indicator";
+        row.style.marginBottom = "12px";
+
+        const bubble = document.createElement("div");
+        bubble.style.display = "inline-block";
+        bubble.style.padding = "10px 14px";
+        bubble.style.background = "#e9eef5";
+        bubble.style.color = "#666";
+        bubble.style.borderRadius = "16px 16px 16px 4px";
+        bubble.style.fontSize = "14px";
+        bubble.textContent = text || "系统正在生成回复...";
+
+        row.appendChild(bubble);
+        chatBox.appendChild(row);
+        scrollChatToBottom();
+      }
+
+      function removeTypingIndicator() {
+        const node = document.getElementById("green-ai-typing-indicator");
+        if (node) node.remove();
+      }
+
+      function wait(ms) {
+        return new Promise(function (resolve) {
+          setTimeout(resolve, ms);
+        });
+      }
+
+      function getTypingStepDelay(character) {
+        let delay = Number(CONFIG.typingCharDelayMs) || 24;
+        const jitter = Number(CONFIG.typingJitterMs) || 10;
+        const punctuationPause = Number(CONFIG.punctuationPauseMs) || 160;
+        if (character === "\n") delay += 120;
+        if ("，。！？；：,.!?;:".indexOf(character) !== -1) delay += punctuationPause;
+        return delay + Math.floor(Math.random() * jitter);
+      }
+
+      async function typeAssistantReply(message) {
+        const bubble = createMessageBubble("", false);
+        for (let i = 0; i < message.length; i += 1) {
+          const character = message.charAt(i);
+          bubble.textContent += character;
+          scrollChatToBottom();
+          await wait(getTypingStepDelay(character));
+        }
+      }
+
+      function formatApiErrorMessage(error) {
+        const message = error && error.message ? error.message : "未知错误";
+        if (message.indexOf("BLTCY_API_KEY is missing") !== -1) {
+          return "代理服务已启动，但还没有配置柏拉图 API Key。请先设置 BLTCY_API_KEY。";
+        }
+        if (message.indexOf("BLTCY_BASE_URL is missing") !== -1) {
+          return "代理服务已启动，但还没有配置柏拉图 Base URL。请先设置 BLTCY_BASE_URL。";
+        }
+        if (message.indexOf("Failed to fetch") !== -1) {
+          return "当前连不到 API 服务。请检查 apiProxyUrl 是否填写正确。";
+        }
+        if (message.indexOf("Gateway error") !== -1) {
+          return "柏拉图网关返回了错误：" + message;
+        }
+        return "请求失败：" + message;
+      }
+
+      async function requestChatReply(messages) {
+        const controller = new AbortController();
+        const timeoutId = setTimeout(function () {
+          controller.abort();
+        }, CONFIG.requestTimeoutMs);
+
+        try {
+          const response = await fetch(CONFIG.apiProxyUrl, {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            signal: controller.signal,
+            body: JSON.stringify({
+              aiCondition: CONFIG.aiCondition,
+              topicFocus: CONFIG.topicFocus,
+              model: CONFIG.model,
+              maxTokens: CONFIG.maxTokens,
+              messages: messages
+            })
+          });
+
+          const rawText = await response.text();
+          let data = null;
+          try {
+            data = rawText ? JSON.parse(rawText) : {};
+          } catch (error) {
+            data = { ok: false, error: rawText || "API returned non-JSON response" };
+          }
+
+          if (!response.ok || !data.ok) {
+            throw new Error((data && data.error) || "API request failed");
+          }
+          return data;
+        } finally {
+          clearTimeout(timeoutId);
+        }
+      }
+
+      async function handleSend() {
+        if (isLoading) return;
+
+        const userMessage = userInput.value.trim();
+        if (!userMessage) return;
+
+        const maxTurns = Number(CONFIG.maxUserTurns) || 0;
+        if (maxTurns > 0 && userTurnCount >= maxTurns) {
+          return;
+        }
+
+        isLoading = true;
+        setButtonState(false);
+        fields.errorMessage.value = "";
+
+        createMessageBubble(userMessage, true);
+        chatHistory.push({ role: "user", content: userMessage });
+        userTurnCount += 1;
+        persistFields();
+
+        userInput.value = "";
+        userInput.disabled = true;
+
+        try {
+          setTip("系统正在思考...");
+          addTypingIndicator("系统正在思考...");
+          await wait(CONFIG.typingDelayMs);
+
+          const data = await requestChatReply(chatHistory);
+          const reply = data.reply || "";
+
+          removeTypingIndicator();
+          setTip("系统正在输入回复...");
+          await typeAssistantReply(reply);
+
+          chatHistory.push({ role: "assistant", content: reply });
+          fields.lastReply.value = reply;
+          persistFields();
+
+          if ((Number(CONFIG.maxUserTurns) || 0) > 0 && userTurnCount >= Number(CONFIG.maxUserTurns)) {
+            fields.complete.value = "1";
+            lockInputArea();
+            setTip("已达到本轮对话上限。");
+          } else {
+            userInput.disabled = false;
+            userInput.focus();
+            setTip("你可以继续追问，但范围需保持在绿色AI相关内容。");
+          }
+        } catch (error) {
+          console.error(error);
+          removeTypingIndicator();
+          fields.errorMessage.value = error && error.message ? error.message : "chat request failed";
+          createMessageBubble(formatApiErrorMessage(error), false);
+          setTip("脚本运行出错，请重新输入并发送。");
+          userInput.disabled = false;
+        } finally {
+          isLoading = false;
+          updateInputAvailability();
+          persistFields();
+        }
+      }
+
+      sendBtn.addEventListener("click", handleSend);
+      userInput.addEventListener("keydown", function (event) {
+        if (event.key === "Enter") {
+          event.preventDefault();
+          handleSend();
+        }
+      });
+
+      userInput.placeholder = CONFIG.inputPlaceholder;
+      createMessageBubble(CONFIG.initialGreeting, false);
+      fields.condition.value = CONFIG.aiCondition;
+      persistFields();
+      updateInputAvailability();
+      setTip("当前只支持绿色AI相关自由对话。");
+    })();
+  </script>
+</body>
+</html>

@@ -3,6 +3,14 @@
   "framework": null,
   "rewrites": [
     {
+      "source": "/freechat",
+      "destination": "/freechat/index.html"
+    },
+    {
+      "source": "/freechat/embed",
+      "destination": "/freechat/embed.html"
+    },
+    {
       "source": "/",
       "destination": "/credamo_chatbot_woz_preview.html"
     }
