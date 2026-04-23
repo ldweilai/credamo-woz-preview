@@ -24,7 +24,8 @@
     <input
       type="text"
       id="user-input"
-      placeholder="请用一句话说明你的理由"
+      value="什么是绿色 AI？"
+      readonly
       style="
         flex: 1;
         padding: 12px 14px;
@@ -47,7 +48,7 @@
   </div>
 
   <div id="chat-tip" style="max-width: 100%; color: #666; font-size: 12px; line-height: 1.5;">
-    请先输入一句你的理由。系统会先思考片刻，再逐字给出一条研究用回复，本轮对话仅 1 次。
+    首先会发送一条固定问题，系统会先给出一段和当前议题相关的介绍，然后再请你自由作答。
   </div>
 
   <input type="hidden" id="credamo_reason_text" />
@@ -65,6 +66,7 @@
     initialAttitudeValue: null, // 1~6，1/2/3 -> oppose，4/5/6 -> support
     initialAttitudeSelector: "", // 例如：input[name="Q_ATTITUDE"]，仅在初始态度题和本 HTML 题同页时可用
     maxTurns: 1,
+    primerQuestionText: "什么是绿色 AI？",
     typingDelayMs: 2600, // 思考停顿，再开始逐字显示
     typingCharDelayMs: 28,
     typingJitterMs: 12,
@@ -377,11 +379,102 @@
     }
   };
 
+  const GENERAL_GREEN_AI_INTRO =
+    "绿色 AI 一般不是只追求模型更强，而是希望在开发、部署和使用 AI 时，同时考虑能耗、算力效率和环境影响，让系统在保持可用性的同时尽量减少不必要的资源消耗。";
+
+  const TOPIC_GREEN_AI_BRIEFS = {
+    T01: {
+      focus: "比如，一个常见做法就是把每次调用 AI 的能耗信息直接展示给用户，让原本隐藏的环境成本变得更可见。",
+      supportView: "如果标签口径清楚、解释也足够明白，我会更倾向于认为这种披露能帮助用户把环境代价带回日常决策。你觉得呢？",
+      opposeView: "但如果标签本身只是一个不稳定的估算值，它也可能让用户误把近似数字当成精确事实。你觉得呢？",
+      neutralView: "所以我更关心的不是单纯显不显示，而是这些信息是否准确、可解释、不会制造误读。你觉得呢？"
+    },
+    T02: {
+      focus: "再比如，也有人主张把更节能的绿色模式设成默认选项，用产品设计直接影响大多数人的使用路径。",
+      supportView: "如果多数日常任务确实可以在低能耗模式下顺利完成，我会更倾向于认为默认绿色模式是一种有效的节能引导。你觉得呢？",
+      opposeView: "但如果默认节能明显影响速度、质量或稳定性，这种引导也可能在用户不够知情时悄悄改变体验。你觉得呢？",
+      neutralView: "所以我更关心的是默认设置到底节省了多少能耗，以及它会不会让用户在不知情时承担性能代价。你觉得呢？"
+    },
+    T03: {
+      focus: "在企业治理层面，也有人主张大型 AI 公司公开训练和推理阶段的能源消耗，让环境责任进入更明确的公共监督。",
+      supportView: "如果披露方法足够清楚，我会更倾向于认为公开这些数据能迫使企业把效率和责任真正纳入竞争逻辑。你觉得呢？",
+      opposeView: "但如果统计边界并不统一，所谓公开也可能只是看起来透明，却并不足以支持可靠比较。你觉得呢？",
+      neutralView: "所以我更关心的是数据有没有统一口径、能不能真正被比较，而不只是企业有没有放出一张表。你觉得呢？"
+    },
+    T04: {
+      focus: "还有一种更强的思路，是去限制那些收益较低、但会调用高能耗模型的任务，把算力当成一种需要更谨慎分配的资源。",
+      supportView: "如果某些任务确实只是出于便利而默认调用最重的模型，我会更倾向于认为适度限制有助于减少无意义的能耗浪费。你觉得呢？",
+      opposeView: "但如果平台替用户过早判断什么才算值得做，这种节能治理也可能迅速越过合理边界。你觉得呢？",
+      neutralView: "所以我更关心的是谁来判断任务价值、依据是什么，以及误判之后由谁承担成本。你觉得呢？"
+    },
+    T05: {
+      focus: "在基础设施层面，也有人主张要求新建 AI 数据中心使用一定比例的可再生能源，让扩张从一开始就和低碳目标绑定起来。",
+      supportView: "如果企业在建设初期就认真考虑电力来源，我会更倾向于认为这种要求能减少未来被锁定的高碳运营路径。你觉得呢？",
+      opposeView: "但如果不同地区的新能源条件差异很大，过于刚性的比例要求也可能显著抬高建设难度。你觉得呢？",
+      neutralView: "所以我更关心的是这类要求是否考虑了地区差异，以及它带来的减排收益能不能抵得上新增成本。你觉得呢？"
+    },
+    T06: {
+      focus: "另一种政策工具，是对高能耗 AI 服务征收环境税，把原本外部化的环境成本重新纳入平台和用户的选择中。",
+      supportView: "如果税收设计得足够清楚，我会更倾向于认为它能迫使平台更认真地优化能效并减少不必要的高消耗使用。你觉得呢？",
+      opposeView: "但如果这笔成本最后主要转嫁给用户，而不是推动技术改进，那它也可能只是增加负担。你觉得呢？",
+      neutralView: "所以我更关心税负究竟落在谁身上、会不会被转嫁，以及它是否真的带来节能激励。你觉得呢？"
+    },
+    T07: {
+      focus: "从技术路线看，也有人主张把更多研发重点放到小模型和边缘 AI 上，用更高效率的路线满足大多数任务需求。",
+      supportView: "如果多数日常任务并不需要最高强度的模型，我会更倾向于认为优先发展高效路线能提升整体普及性和可持续性。你觉得呢？",
+      opposeView: "但如果研发资源过早向轻量化集中，部分需要高性能突破的前沿能力也可能因此被压缩。你觉得呢？",
+      neutralView: "所以我更关心的不是哪一端绝对更好，而是研发资源如何在效率普及和前沿突破之间保持平衡。你觉得呢？"
+    },
+    T08: {
+      focus: "落到教育场景里，争议常常会变成高校是否应该大规模部署 AI 学习助手，也就是在教育收益和新增能耗之间做权衡。",
+      supportView: "如果这些工具确实能稳定提升学生获得帮助的机会，我会更倾向于认为适度增加一些能耗是可以被讨论和接受的。你觉得呢？",
+      opposeView: "但如果部署规模很大、收益却不稳定，那么持续的用电和维护成本也可能显得并不划算。你觉得呢？",
+      neutralView: "所以我更关心的是教学效果、使用强度和长期成本之间是否真的匹配，而不只是技术看起来是否先进。你觉得呢？"
+    },
+    T09: {
+      focus: "放到平台设计里，也有人希望把模型能效纳入排序和推荐规则，让绿色指标直接进入用户的选择环境。",
+      supportView: "如果能效进入排序后能给高效率模型更明确的激励，我会更倾向于认为这是一种有现实效果的绿色引导。你觉得呢？",
+      opposeView: "但如果平台过度强调能效分，排序也可能忽视任务匹配、效果和可靠性这些更复杂的维度。你觉得呢？",
+      neutralView: "所以我更关心的是能效在推荐体系里占多大权重，以及它会不会制造新的评价偏差。你觉得呢？"
+    },
+    T10: {
+      focus: "再往前一步，还会有人讨论企业能否用 AI 在其他行业可能带来的减排收益，来为自身的高能耗使用做一定辩护。",
+      supportView: "如果这些外部减排收益可以被较清楚地测量和验证，我会更倾向于认为净效应确实值得被纳入判断。你觉得呢？",
+      opposeView: "但如果企业只是用抽象的减排愿景来回避自身直接能耗，这种说法也很容易被理解为绿色漂洗。你觉得呢？",
+      neutralView: "所以我更关心的是这些减排收益是否可核实、可归因，能不能和自身能耗放在同一框架里比较。你觉得呢？"
+    },
+    T11: {
+      focus: "在地方发展层面，争议也可能变成政府是否应该用能源补贴去支持 AI 数据中心建设，把公共资源投入到高能耗基础设施扩张中。",
+      supportView: "如果地方确实希望借此吸引产业和算力集聚，我会更倾向于认为适度补贴是一种现实的发展工具。你觉得呢？",
+      opposeView: "但如果补贴削弱了企业面对节能压力的动力，也挤占了其他更有公共价值的投入，这种支持就会变得很有争议。你觉得呢？",
+      neutralView: "所以我更关心的是补贴对象、退出机制和环境约束是否清楚，而不只是能不能短期吸引项目。你觉得呢？"
+    },
+    T12: {
+      focus: "还有一种更轻的做法，是平台主动提示用户当前任务可以换成更低能耗的模型，在不强制限制的前提下做轻量引导。",
+      supportView: "如果提示足够准确又不过度打扰，我会更倾向于认为这种做法能把节能选择变得更容易。你觉得呢？",
+      opposeView: "但如果系统判断不准，或者提示出现得太频繁，它也可能迅速从帮助变成噪音。你觉得呢？",
+      neutralView: "所以我更关心的是提示是否足够克制、推荐是否准确，以及用户是否能轻松接受或忽略它。你觉得呢？"
+    }
+  };
+
   function getLongformExtension(topicId, stance, condition) {
     const topicExtension = TOPIC_LONGFORM_EXTENSIONS[topicId];
     if (!topicExtension) return "";
     if (condition === "neutral") return topicExtension.neutral || "";
     return stance === "support" ? (topicExtension.support || "") : (topicExtension.oppose || "");
+  }
+
+  function buildGreenAiPrimer(topicId, stance, condition) {
+    const topicBrief = TOPIC_GREEN_AI_BRIEFS[topicId];
+    if (!topicBrief) {
+      return GENERAL_GREEN_AI_INTRO + "\n\n" + "所以接下来真正值得讨论的，是这类设计究竟能不能在效率、体验和环境影响之间形成较稳的平衡。你觉得呢？";
+    }
+
+    const viewpoint = condition === "neutral"
+      ? topicBrief.neutralView
+      : (stance === "support" ? topicBrief.supportView : topicBrief.opposeView);
+
+    return GENERAL_GREEN_AI_INTRO + "\n\n" + topicBrief.focus + " " + viewpoint;
   }
 
   function buildLongformReply(topicId, stance, condition, text) {
@@ -433,7 +526,7 @@
   const historyField = document.getElementById("credamo_chat_history");
   const completeField = document.getElementById("credamo_trial_complete");
 
-  let turnCount = 0;
+  let conversationStage = "primer_pending";
   let chatHistory = [];
 
   function setTip(message) {
@@ -459,6 +552,37 @@
   function persistChatState() {
     historyField.value = JSON.stringify(chatHistory);
     saveFieldValues();
+  }
+
+  function setButtonState(button, enabled) {
+    if (!button) return;
+    button.disabled = !enabled;
+    button.style.opacity = enabled ? "1" : "0.6";
+    button.style.cursor = enabled ? "pointer" : "not-allowed";
+  }
+
+  function lockReasonInput(placeholder) {
+    userInput.disabled = true;
+    userInput.readOnly = true;
+    userInput.placeholder = placeholder || "";
+    setButtonState(sendBtn, false);
+  }
+
+  function unlockReasonInput() {
+    userInput.disabled = false;
+    userInput.readOnly = false;
+    userInput.value = "";
+    userInput.placeholder = "请用一句话说明你的看法或理由";
+    setButtonState(sendBtn, true);
+    userInput.focus();
+  }
+
+  function preparePrimerInput() {
+    userInput.disabled = false;
+    userInput.readOnly = true;
+    userInput.value = CONFIG.primerQuestionText;
+    userInput.placeholder = "";
+    setButtonState(sendBtn, true);
   }
 
   function scrollChatToBottom() {
@@ -549,6 +673,16 @@
     });
   }
 
+  async function runAssistantTurn(message) {
+    setTip("系统正在思考...");
+    addTypingIndicator();
+    await wait(CONFIG.typingDelayMs);
+
+    removeTypingIndicator();
+    setTip("系统正在输入回复...");
+    await typeAssistantReply(message);
+  }
+
   function getTypingStepDelay(character) {
     let delay = Number(CONFIG.typingCharDelayMs) || 28;
     const jitter = Number(CONFIG.typingJitterMs) || 12;
@@ -571,29 +705,58 @@
     }
   }
 
+  async function handlePrimerSend() {
+    const fixedQuestion = CONFIG.primerQuestionText;
+    if (!fixedQuestion || conversationStage !== "primer_pending") return;
+
+    try {
+      conversationStage = "primer_loading";
+      lockReasonInput("系统正在介绍绿色 AI...");
+
+      addMessageToChatBox(fixedQuestion, true);
+      chatHistory.push({ role: "user", content: fixedQuestion, responseId: "primer_question" });
+      persistChatState();
+
+      const primerReply = buildGreenAiPrimer(CONFIG.topicId, CONFIG.userStance, CONFIG.aiCondition);
+      await runAssistantTurn(primerReply);
+
+      chatHistory.push({ role: "assistant", content: primerReply, responseId: "primer_" + CONFIG.topicId + "_" + CONFIG.aiCondition + "_" + CONFIG.userStance });
+      persistChatState();
+
+      conversationStage = "awaiting_reason";
+      unlockReasonInput();
+      setTip("请用一句话说明你的看法或理由。");
+    } catch (error) {
+      console.error(error);
+      removeTypingIndicator();
+      addMessageToChatBox("系统内部出错，未能完成绿色 AI 介绍。请打开浏览器控制台查看报错。", false);
+      conversationStage = "primer_pending";
+      preparePrimerInput();
+      setTip("脚本运行出错，请重新发送固定问题。");
+    }
+  }
+
   async function handleSend() {
     try {
+      if (conversationStage === "primer_pending") {
+        await handlePrimerSend();
+        return;
+      }
+      if (conversationStage !== "awaiting_reason") return;
       const userMessage = userInput.value.trim();
       if (!userMessage) return;
-      if (turnCount >= CONFIG.maxTurns) return;
 
-      turnCount += 1;
+      conversationStage = "reply_loading";
       reasonField.value = userMessage;
       addMessageToChatBox(userMessage, true);
       chatHistory.push({ role: "user", content: userMessage });
       persistChatState();
 
       userInput.value = "";
-      sendBtn.disabled = true;
-      setTip("系统正在思考...");
-      addTypingIndicator();
+      lockReasonInput("系统正在输入回复...");
 
       const replyItem = pickRandomReply();
-      await wait(CONFIG.typingDelayMs);
-
-      removeTypingIndicator();
-      setTip("系统正在输入回复...");
-      await typeAssistantReply(replyItem.text);
+      await runAssistantTurn(replyItem.text);
       chatHistory.push({ role: "assistant", content: replyItem.text, responseId: replyItem.id });
 
       aiReplyField.value = replyItem.text;
@@ -602,18 +765,21 @@
       persistChatState();
 
       if (CONFIG.lockAfterReply) {
+        conversationStage = "done";
         lockInputArea();
         setTip("本轮对话已完成，请继续阅读后续材料并作答。");
       } else {
-        sendBtn.disabled = false;
+        conversationStage = "awaiting_reason";
+        unlockReasonInput();
         setTip("你可以继续输入。");
       }
     } catch (error) {
       console.error(error);
       removeTypingIndicator();
       addMessageToChatBox("系统内部出错，未能生成回复。请打开浏览器控制台查看报错。", false);
-      setTip("脚本运行出错，请打开控制台查看报错信息。");
-      sendBtn.disabled = false;
+      conversationStage = "awaiting_reason";
+      unlockReasonInput();
+      setTip("脚本运行出错，请重新输入并发送。");
     }
   }
 
@@ -628,5 +794,6 @@
   addMessageToChatBox(CONFIG.initialGreeting, false);
   chatHistory.push({ role: "assistant", content: CONFIG.initialGreeting, responseId: "system_greeting" });
   persistChatState();
-  setTip("脚本已加载。请输入一句理由并点击发送。");
+  preparePrimerInput();
+  setTip("脚本已加载。请先直接发送固定问题。");
 </script>
